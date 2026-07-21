@@ -1,0 +1,33 @@
+{
+  "name": "telebid-auction-lab",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "tools/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @telebid/api\" \"npm run dev -w @telebid/web\"",
+    "dev:infra": "docker compose up -d postgres toxiproxy",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "experiment": "npm run experiment -w @telebid/load",
+    "lab": "npm run lab:up && npm run lab:wait && npm run lab:test",
+    "lab:up": "docker compose up --build -d",
+    "lab:wait": "node scripts/wait-for-api.mjs",
+    "lab:test": "npm run experiment -w @telebid/load",
+    "lab:down": "docker compose down",
+    "lab:reset": "docker compose down -v",
+    "lab:logs": "docker compose logs -f api web",
+    "telegram": "node scripts/telegram-start.mjs",
+    "telegram:logs": "docker compose --profile telegram logs -f api web cloudflared",
+    "telegram:down": "docker compose --profile telegram down",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.8.3"
+  }
+}

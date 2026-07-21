@@ -1,0 +1,22 @@
+{
+  "name": "@telebid/load",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "experiment": "node --import tsx src/architecture.ts",
+    "experiment:transport": "node --import tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test src/verdicts.spec.ts"
+  },
+  "dependencies": {
+    "eventsource": "^4.0.0",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.env
+coverage
+datasets/*.json
+datasets/*.csv
+datasets/*.md
+*.log
+.DS_Store
