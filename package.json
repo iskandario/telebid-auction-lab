@@ -22,7 +22,7 @@
     "lab:logs": "docker compose logs -f api web",
     "telegram": "node scripts/telegram-start.mjs",
     "telegram:logs": "docker compose --profile telegram logs -f api web cloudflared",
-    "telegram:down": "docker compose --profile telegram down",
+    "telegram:down": "node scripts/telegram-stop.mjs",
     "format": "prettier --write ."
   },
   "devDependencies": {
