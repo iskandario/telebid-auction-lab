@@ -28,6 +28,7 @@
   "devDependencies": {
     "concurrently": "^9.2.0",
     "prettier": "^3.6.2",
+    "runlocal": "^0.10.0",
     "typescript": "^5.8.3"
   }
 }

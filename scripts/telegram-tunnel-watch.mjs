@@ -23,7 +23,7 @@ function normalizeUrl(value) {
 function latestTunnelUrl() {
   if (!existsSync(tunnelLogPath)) return '';
   const output = readFileSync(tunnelLogPath, 'utf8');
-  const url = [...output.matchAll(/https:\/\/[a-z0-9-]+\.lhr\.life/gi)].at(-1)?.[0];
+  const url = [...output.matchAll(/https:\/\/[a-z0-9-]+\.runlocal\.eu/gi)].at(-1)?.[0];
   return url ? normalizeUrl(url) : '';
 }
 

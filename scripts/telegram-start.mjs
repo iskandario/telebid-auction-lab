@@ -14,7 +14,6 @@ const runtimeDirectory = '.telebid';
 const tunnelPidPath = `${runtimeDirectory}/tunnel.pid`;
 const legacyPinggyPidPath = `${runtimeDirectory}/pinggy.pid`;
 const tunnelLogPath = `${runtimeDirectory}/tunnel.log`;
-const tunnelKnownHostsPath = `${runtimeDirectory}/known_hosts`;
 const tunnelWatcherPidPath = `${runtimeDirectory}/tunnel-watch.pid`;
 const tunnelWatcherLogPath = `${runtimeDirectory}/tunnel-watch.log`;
 
@@ -91,8 +90,8 @@ function stopManagedTunnel() {
   stopManagedProcess(legacyPinggyPidPath);
 }
 
-function latestLocalhostRunUrl(output) {
-  return [...output.matchAll(/https:\/\/[a-z0-9-]+\.lhr\.life/gi)].at(-1)?.[0] ?? '';
+function latestRunlocalUrl(output) {
+  return [...output.matchAll(/https:\/\/[a-z0-9-]+\.runlocal\.eu/gi)].at(-1)?.[0] ?? '';
 }
 
 function startTunnelWatcher() {
@@ -107,33 +106,25 @@ function startTunnelWatcher() {
   watcher.unref();
 }
 
-async function startLocalhostRun() {
+async function startRunlocal() {
   mkdirSync(runtimeDirectory, { recursive: true });
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     stopManagedTunnel();
-    if (attempt > 1) process.stdout.write(`Повторяю подключение к localhost.run (${attempt}/3)…\n`);
+    if (attempt > 1) process.stdout.write(`Повторяю подключение к runlocal (${attempt}/3)…\n`);
 
     const log = openSync(tunnelLogPath, 'w');
     const tunnel = spawn(
-      'ssh',
-      [
-        '-o',
-        'StrictHostKeyChecking=accept-new',
-        '-o',
-        `UserKnownHostsFile=${tunnelKnownHostsPath}`,
-        '-o',
-        'ServerAliveInterval=30',
-        '-o',
-        'ExitOnForwardFailure=yes',
-        '-R',
-        '80:localhost:4173',
-        'nokey@localhost.run',
-        '--',
-        '--output',
-        'json',
-      ],
+      process.platform === 'win32' ? 'node_modules/.bin/runlocal.cmd' : 'node_modules/.bin/runlocal',
+      ['4173'],
       { detached: true, stdio: ['ignore', log, log] },
     );
+    let tunnelExited = false;
+    tunnel.once('error', () => {
+      tunnelExited = true;
+    });
+    tunnel.once('exit', () => {
+      tunnelExited = true;
+    });
     closeSync(log);
     writeFileSync(tunnelPidPath, `${tunnel.pid}\n`, 'utf8');
     tunnel.unref();
@@ -141,8 +132,9 @@ async function startLocalhostRun() {
     const deadline = Date.now() + 75_000;
     while (Date.now() < deadline) {
       const output = existsSync(tunnelLogPath) ? readFileSync(tunnelLogPath, 'utf8') : '';
-      const url = latestLocalhostRunUrl(output);
+      const url = latestRunlocalUrl(output);
       if (url && (await waitForPublic(url, 30_000))) return url;
+      if (tunnelExited) break;
       try {
         process.kill(tunnel.pid, 0);
       } catch {
@@ -201,10 +193,10 @@ if (!publicUrl) {
 }
 if (publicUrl && !(await waitForPublic(publicUrl, 15_000))) publicUrl = '';
 if (!publicUrl) {
-  process.stdout.write('Cloudflare недоступен из этой сети, переключаюсь на localhost.run…\n');
+  process.stdout.write('Cloudflare недоступен из этой сети, переключаюсь на runlocal…\n');
   docker(['compose', '--profile', 'telegram', 'stop', 'cloudflared'], { allowFailure: true });
-  publicUrl = await startLocalhostRun();
-  tunnelProvider = 'localhost.run';
+  publicUrl = await startRunlocal();
+  tunnelProvider = 'runlocal';
 }
 publicUrl = new URL(publicUrl).toString();
 
@@ -226,13 +218,13 @@ await telegram('setMyCommands', {
 await telegram('setMyShortDescription', {
   short_description: 'Аукционы рекламных слотов и тендеры брендов в Telegram',
 }).catch(() => undefined);
-if (tunnelProvider === 'localhost.run') startTunnelWatcher();
+if (tunnelProvider === 'runlocal') startTunnelWatcher();
 
 process.stdout.write(`\nTeleBid готов.\n`);
 process.stdout.write(`Бот: https://t.me/${bot.username}\n`);
 process.stdout.write(`Mini App: ${publicUrl}\n`);
 process.stdout.write(`Туннель: ${tunnelProvider}\n`);
-if (tunnelProvider === 'localhost.run') process.stdout.write('Автообновление ссылки: включено\n');
+if (tunnelProvider === 'runlocal') process.stdout.write('Автообновление ссылки: включено\n');
 process.stdout.write(`Локально: http://localhost:4173\n`);
 process.stdout.write(`Логи: npm run telegram:logs\n`);
 process.stdout.write(`Остановить: npm run telegram:down\n`);
