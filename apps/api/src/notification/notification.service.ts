@@ -46,6 +46,9 @@ export class NotificationService {
       createdAt: entity.createdAt.toISOString(),
       readAt: entity.readAt?.toISOString() ?? null,
       telegramStatus: entity.telegramStatus,
+      telegramDeliveredAt: entity.telegramDeliveredAt?.toISOString() ?? null,
+      telegramAttempts: entity.telegramAttempts,
+      telegramLastError: entity.telegramLastError,
     };
   }
 }

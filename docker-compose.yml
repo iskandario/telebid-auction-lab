@@ -30,8 +30,11 @@ services:
       API_PORT: 8080
       WEB_ORIGIN: http://localhost:4173
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DELIVERY_MODE: ${TELEGRAM_DELIVERY_MODE:-live}
+      TELEGRAM_RETRY_BASE_DELAY_MS: ${TELEGRAM_RETRY_BASE_DELAY_MS:-1000}
       MINI_APP_URL: ${MINI_APP_URL:-}
       ALLOW_DEMO_AUTH: ${ALLOW_DEMO_AUTH:-true}
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-true}
     depends_on:
       postgres:
         condition: service_healthy

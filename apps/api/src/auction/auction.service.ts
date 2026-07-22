@@ -117,7 +117,9 @@ export class AuctionService {
       if (!auction) throw new NotFoundException('Аукцион не найден');
 
       const processedRepository = manager.getRepository(ProcessedCommandEntity);
-      const processed = await processedRepository.findOne({ where: { commandId: dto.commandId } });
+      const processed = await processedRepository.findOne({
+        where: { auctionId, commandId: dto.commandId },
+      });
       if (processed) {
         return {
           result: { ...(processed.response as unknown as CommandResult), idempotentReplay: true },

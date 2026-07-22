@@ -20,7 +20,10 @@ import { TelegramModule } from './telegram/telegram.module';
         type: 'postgres' as const,
         url: config.get<string>('DATABASE_URL') ?? 'postgres://telebid:telebid@localhost:5440/telebid',
         autoLoadEntities: true,
-        synchronize: true,
+        synchronize:
+          config.get<string>('DB_SYNCHRONIZE') === 'true' ||
+          (config.get<string>('DB_SYNCHRONIZE') !== 'false' &&
+            config.get<string>('NODE_ENV') !== 'production'),
         logging: false,
       }),
     }),

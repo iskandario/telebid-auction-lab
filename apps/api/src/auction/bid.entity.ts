@@ -1,8 +1,18 @@
-import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  Unique,
+} from 'typeorm';
 import { numericTransformer } from '../common/numeric.transformer';
 import { AuctionEntity } from './auction.entity';
 
 @Entity({ name: 'bids' })
+@Unique('uq_bid_auction_command', ['auctionId', 'commandId'])
 export class BidEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -21,7 +31,7 @@ export class BidEntity {
   @Column({ type: 'numeric', precision: 14, scale: 2, transformer: numericTransformer })
   amount: number;
 
-  @Column({ name: 'command_id', type: 'uuid', unique: true })
+  @Column({ name: 'command_id', type: 'uuid' })
   commandId: string;
 
   @CreateDateColumn({ name: 'accepted_at', type: 'timestamptz' })

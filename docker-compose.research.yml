@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: telebid
+      POSTGRES_PASSWORD: telebid
+      POSTGRES_DB: telebid_research
+    ports:
+      - "5441:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telebid -d telebid_research"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - telebid-research-postgres:/var/lib/postgresql/data
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    ports:
+      - "8475:8474"
+      - "8667:8666"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://telebid:telebid@postgres:5432/telebid_research
+      API_PORT: 8080
+      WEB_ORIGIN: http://localhost:4173
+      TELEGRAM_BOT_TOKEN: ""
+      MINI_APP_URL: https://example.invalid/telebid
+      TELEGRAM_DELIVERY_MODE: simulated
+      TELEGRAM_SIMULATED_LATENCY_MS: "25"
+      TELEGRAM_SIMULATED_FAIL_FIRST_ATTEMPT: "true"
+      TELEGRAM_RETRY_BASE_DELAY_MS: "40"
+      ALLOW_DEMO_AUTH: "true"
+      DB_SYNCHRONIZE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  telebid-research-postgres:

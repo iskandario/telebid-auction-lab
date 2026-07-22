@@ -3,7 +3,6 @@ import {
   createAuction,
   getTelegramSession,
   listAuctions,
-  listNotifications,
   placeBid,
   publishAuction,
   type TelegramSession,
@@ -19,6 +18,7 @@ import {
   telegramWebApp,
 } from './telegram';
 import { useAuctionLab } from './useAuctionLab';
+import { useNotificationInbox } from './useNotificationInbox';
 import './telegram-mini-app.css';
 
 type MainView = 'market' | 'mine' | 'notifications';
@@ -65,6 +65,17 @@ function compactNumber(value: number | null): string {
 function formatPlacement(value: string | null): string {
   if (!value) return 'Дата по договорённости';
   return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function notificationDeliveryLabel(notification: NotificationView): string {
+  if (notification.telegramStatus === 'DELIVERED') {
+    return `Доставлено ботом · попыток: ${notification.telegramAttempts}`;
+  }
+  if (notification.telegramStatus === 'FAILED') {
+    return `Бот повторит доставку · попыток: ${notification.telegramAttempts}`;
+  }
+  if (notification.telegramStatus === 'PENDING') return 'Отправляется ботом';
+  return 'Сохранено в Mini App';
 }
 
 function useCountdown(endsAt: string): string {
@@ -134,7 +145,6 @@ function EmptyState({ view }: { view: MainView }) {
 export function TelegramMiniApp() {
   const [session, setSession] = useState<TelegramSession | null>(null);
   const [auctions, setAuctions] = useState<AuctionSnapshot[]>([]);
-  const [notifications, setNotifications] = useState<NotificationView[]>([]);
   const [view, setView] = useState<MainView>('market');
   const [marketKind, setMarketKind] = useState<AuctionKind>('DIRECT');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -147,6 +157,8 @@ export function TelegramMiniApp() {
 
   const participantId = session?.user.id ?? getDemoIdentity().id;
   const live = useAuctionLab(selectedId, participantId, 'websocket', 'hybrid');
+  const inbox = useNotificationInbox(session?.user.id ?? null);
+  const notifications = inbox.notifications;
   const selectedFromList = auctions.find((auction) => auction.id === selectedId) ?? null;
   const selected = live.auction ?? selectedFromList;
 
@@ -162,13 +174,6 @@ export function TelegramMiniApp() {
     initializeTelegram();
     reload().catch((cause: Error) => setError(cause.message));
   }, [reload]);
-
-  useEffect(() => {
-    if (!session) return;
-    listNotifications(session.user.id, '0')
-      .then((items) => setNotifications(items.slice().reverse()))
-      .catch(() => undefined);
-  }, [session, live.notifications.length]);
 
   useEffect(() => {
     if (!selected) return;
@@ -315,7 +320,7 @@ export function TelegramMiniApp() {
         )}
 
         {view === 'mine' && <div className="tg-page-title"><span>МОИ ТОРГИ</span><h1>Созданные и активные</h1><p>Лоты, которыми вы управляете, и аукционы, где ваша ставка лидирует.</p></div>}
-        {view === 'notifications' && <div className="tg-page-title"><span>ЦЕНТР СОБЫТИЙ</span><h1>Уведомления</h1><p>Эти события сохраняются на сервере и дублируются ботом, даже когда Mini App закрыт.</p></div>}
+        {view === 'notifications' && <div className="tg-page-title"><span>ЦЕНТР СОБЫТИЙ · {inbox.status === 'live' ? 'LIVE' : 'RECOVERY'}</span><h1>Уведомления</h1><p>События хранятся в серверном inbox, восстанавливаются после reconnect и дублируются ботом, когда Mini App закрыт.</p></div>}
 
         {view !== 'notifications' && (
           <section className="tg-feed">
@@ -329,14 +334,14 @@ export function TelegramMiniApp() {
             {notifications.length ? notifications.map((notification) => (
               <button key={notification.notificationId} onClick={() => setSelectedId(notification.auctionId)}>
                 <span className={`tg-notification-icon tg-notification-icon--${notification.kind.toLowerCase()}`}>{notification.kind === 'AUCTION_WON' ? '★' : '↗'}</span>
-                <div><strong>{notification.message}</strong><small>{notification.telegramStatus === 'DELIVERED' ? 'Доставлено в чат с ботом' : 'Сохранено в Mini App'} · {new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(notification.createdAt))}</small></div>
+                <div><strong>{notification.message}</strong><small>{notificationDeliveryLabel(notification)} · {new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(notification.createdAt))}</small></div>
               </button>
             )) : <EmptyState view="notifications" />}
           </section>
         )}
 
         <a className="tg-research-card" href="/?mode=lab">
-          <div><span>ARCHITECTURE LAB</span><strong>Почему победитель и уведомления не теряются?</strong><p>Открыть воспроизводимый эксперимент с конкурентными ставками, reconnect и повторными запросами.</p></div><b>→</b>
+          <div><span>ARCHITECTURE LAB</span><strong>Почему победитель и уведомления не теряются?</strong><p>Открыть воспроизводимый эксперимент: конкурентные ставки, закрытый Mini App, reconnect и отказ Bot API.</p></div><b>→</b>
         </a>
       </main>
 

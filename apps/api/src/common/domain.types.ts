@@ -63,6 +63,9 @@ export interface NotificationView {
   createdAt: string;
   readAt: string | null;
   telegramStatus: string;
+  telegramDeliveredAt: string | null;
+  telegramAttempts: number;
+  telegramLastError: string | null;
 }
 
 export type SyncResponse =

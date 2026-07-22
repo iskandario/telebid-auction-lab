@@ -19,10 +19,10 @@ export class SyncService {
     sinceVersion: number,
     strategy: RecoveryStrategy,
   ): Promise<SyncResponse> {
-    const [snapshot, events] = await Promise.all([
-      this.auctions.get(auctionId),
-      this.eventsAfter(auctionId, sinceVersion),
-    ]);
+    const snapshot = await this.auctions.get(auctionId);
+    const events = (await this.eventsAfter(auctionId, sinceVersion)).filter(
+      (event) => event.aggregateVersion <= snapshot.version,
+    );
     return selectRecovery(strategy, snapshot, events, sinceVersion);
   }
 
