@@ -15,6 +15,8 @@ const tunnelPidPath = `${runtimeDirectory}/tunnel.pid`;
 const legacyPinggyPidPath = `${runtimeDirectory}/pinggy.pid`;
 const tunnelLogPath = `${runtimeDirectory}/tunnel.log`;
 const tunnelKnownHostsPath = `${runtimeDirectory}/known_hosts`;
+const tunnelWatcherPidPath = `${runtimeDirectory}/tunnel-watch.pid`;
+const tunnelWatcherLogPath = `${runtimeDirectory}/tunnel-watch.log`;
 
 if (!existsSync('.env')) {
   copyFileSync('.env.example', '.env');
@@ -49,10 +51,12 @@ async function waitFor(url, timeoutMs) {
   throw new Error(`Сервис не запустился: ${url}`);
 }
 
-async function isReachable(url) {
+async function isTeleBidReachable(url) {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(3500) });
-    return response.ok;
+    const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body.status === 'ok' && body.service === 'telebid-api';
   } catch {
     return false;
   }
@@ -61,71 +65,94 @@ async function isReachable(url) {
 async function waitForPublic(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await isReachable(`${url}/health`)) return true;
+    if (await isTeleBidReachable(new URL('health', `${url.replace(/\/+$/, '')}/`).toString())) return true;
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   return false;
 }
 
-function stopManagedTunnel() {
-  for (const pidPath of [tunnelPidPath, legacyPinggyPidPath]) {
-    if (!existsSync(pidPath)) continue;
-    const pid = Number(readFileSync(pidPath, 'utf8'));
-    if (Number.isInteger(pid) && pid > 0) {
+function stopManagedProcess(pidPath) {
+  if (!existsSync(pidPath)) return;
+  const pid = Number(readFileSync(pidPath, 'utf8'));
+  if (Number.isInteger(pid) && pid > 0) {
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
       try {
-        process.kill(-pid, 'SIGTERM');
-      } catch {
-        try {
-          process.kill(pid, 'SIGTERM');
-        } catch {}
-      }
+        process.kill(pid, 'SIGTERM');
+      } catch {}
     }
-    unlinkSync(pidPath);
   }
+  unlinkSync(pidPath);
+}
+
+function stopManagedTunnel() {
+  stopManagedProcess(tunnelPidPath);
+  stopManagedProcess(legacyPinggyPidPath);
+}
+
+function latestLocalhostRunUrl(output) {
+  return [...output.matchAll(/https:\/\/[a-z0-9-]+\.lhr\.life/gi)].at(-1)?.[0] ?? '';
+}
+
+function startTunnelWatcher() {
+  stopManagedProcess(tunnelWatcherPidPath);
+  const log = openSync(tunnelWatcherLogPath, 'w');
+  const watcher = spawn(process.execPath, ['scripts/telegram-tunnel-watch.mjs'], {
+    detached: true,
+    stdio: ['ignore', log, log],
+  });
+  closeSync(log);
+  writeFileSync(tunnelWatcherPidPath, `${watcher.pid}\n`, 'utf8');
+  watcher.unref();
 }
 
 async function startLocalhostRun() {
   mkdirSync(runtimeDirectory, { recursive: true });
-  stopManagedTunnel();
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    stopManagedTunnel();
+    if (attempt > 1) process.stdout.write(`Повторяю подключение к localhost.run (${attempt}/3)…\n`);
 
-  const log = openSync(tunnelLogPath, 'w');
-  const tunnel = spawn(
-    'ssh',
-    [
-      '-o',
-      'StrictHostKeyChecking=accept-new',
-      '-o',
-      `UserKnownHostsFile=${tunnelKnownHostsPath}`,
-      '-o',
-      'ServerAliveInterval=30',
-      '-o',
-      'ExitOnForwardFailure=yes',
-      '-R',
-      '80:localhost:4173',
-      'nokey@localhost.run',
-      '--',
-      '--output',
-      'json',
-    ],
-    { detached: true, stdio: ['ignore', log, log] },
-  );
-  closeSync(log);
-  writeFileSync(tunnelPidPath, `${tunnel.pid}\n`, 'utf8');
-  tunnel.unref();
+    const log = openSync(tunnelLogPath, 'w');
+    const tunnel = spawn(
+      'ssh',
+      [
+        '-o',
+        'StrictHostKeyChecking=accept-new',
+        '-o',
+        `UserKnownHostsFile=${tunnelKnownHostsPath}`,
+        '-o',
+        'ServerAliveInterval=30',
+        '-o',
+        'ExitOnForwardFailure=yes',
+        '-R',
+        '80:localhost:4173',
+        'nokey@localhost.run',
+        '--',
+        '--output',
+        'json',
+      ],
+      { detached: true, stdio: ['ignore', log, log] },
+    );
+    closeSync(log);
+    writeFileSync(tunnelPidPath, `${tunnel.pid}\n`, 'utf8');
+    tunnel.unref();
 
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    const output = existsSync(tunnelLogPath) ? readFileSync(tunnelLogPath, 'utf8') : '';
-    const url = output.match(/https:\/\/[a-z0-9-]+\.lhr\.life/i)?.[0];
-    if (url && (await waitForPublic(url, 15_000))) return url;
-    try {
-      process.kill(tunnel.pid, 0);
-    } catch {
-      break;
+    const deadline = Date.now() + 75_000;
+    while (Date.now() < deadline) {
+      const output = existsSync(tunnelLogPath) ? readFileSync(tunnelLogPath, 'utf8') : '';
+      const url = latestLocalhostRunUrl(output);
+      if (url && (await waitForPublic(url, 30_000))) return url;
+      try {
+        process.kill(tunnel.pid, 0);
+      } catch {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    await new Promise((resolve) => setTimeout(resolve, 750));
+    stopManagedTunnel();
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  stopManagedTunnel();
   throw new Error(`Резервный HTTPS-туннель не запустился. Лог: ${tunnelLogPath}`);
 }
 
@@ -146,6 +173,7 @@ if (configuredUrl && !configuredUrl.startsWith('https://')) {
 }
 process.stdout.write(`Запускаю TeleBid, PostgreSQL и ${configuredUrl ? 'приложение' : 'HTTPS-туннель'}…\n`);
 mkdirSync(runtimeDirectory, { recursive: true });
+stopManagedProcess(tunnelWatcherPidPath);
 stopManagedTunnel();
 docker(['compose', '--profile', 'telegram', 'rm', '-sf', 'cloudflared'], { allowFailure: true });
 docker([
@@ -178,6 +206,7 @@ if (!publicUrl) {
   publicUrl = await startLocalhostRun();
   tunnelProvider = 'localhost.run';
 }
+publicUrl = new URL(publicUrl).toString();
 
 const bot = await telegram('getMe');
 await telegram('setChatMenuButton', {
@@ -197,11 +226,13 @@ await telegram('setMyCommands', {
 await telegram('setMyShortDescription', {
   short_description: 'Аукционы рекламных слотов и тендеры брендов в Telegram',
 }).catch(() => undefined);
+if (tunnelProvider === 'localhost.run') startTunnelWatcher();
 
 process.stdout.write(`\nTeleBid готов.\n`);
 process.stdout.write(`Бот: https://t.me/${bot.username}\n`);
 process.stdout.write(`Mini App: ${publicUrl}\n`);
 process.stdout.write(`Туннель: ${tunnelProvider}\n`);
+if (tunnelProvider === 'localhost.run') process.stdout.write('Автообновление ссылки: включено\n');
 process.stdout.write(`Локально: http://localhost:4173\n`);
 process.stdout.write(`Логи: npm run telegram:logs\n`);
 process.stdout.write(`Остановить: npm run telegram:down\n`);
