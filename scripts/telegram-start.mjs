@@ -11,10 +11,10 @@ import {
 } from 'node:fs';
 
 const runtimeDirectory = '.telebid';
-const pinggyPidPath = `${runtimeDirectory}/pinggy.pid`;
-const pinggyLogPath = `${runtimeDirectory}/pinggy.log`;
-const pinggyKeyPath = `${runtimeDirectory}/pinggy-key`;
-const pinggyKnownHostsPath = `${runtimeDirectory}/known_hosts`;
+const tunnelPidPath = `${runtimeDirectory}/tunnel.pid`;
+const legacyPinggyPidPath = `${runtimeDirectory}/pinggy.pid`;
+const tunnelLogPath = `${runtimeDirectory}/tunnel.log`;
+const tunnelKnownHostsPath = `${runtimeDirectory}/known_hosts`;
 
 if (!existsSync('.env')) {
   copyFileSync('.env.example', '.env');
@@ -67,63 +67,56 @@ async function waitForPublic(url, timeoutMs) {
   return false;
 }
 
-function stopManagedPinggy() {
-  if (!existsSync(pinggyPidPath)) return;
-  const pid = Number(readFileSync(pinggyPidPath, 'utf8'));
-  if (Number.isInteger(pid) && pid > 0) {
-    try {
-      process.kill(-pid, 'SIGTERM');
-    } catch {
+function stopManagedTunnel() {
+  for (const pidPath of [tunnelPidPath, legacyPinggyPidPath]) {
+    if (!existsSync(pidPath)) continue;
+    const pid = Number(readFileSync(pidPath, 'utf8'));
+    if (Number.isInteger(pid) && pid > 0) {
       try {
-        process.kill(pid, 'SIGTERM');
-      } catch {}
+        process.kill(-pid, 'SIGTERM');
+      } catch {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {}
+      }
     }
+    unlinkSync(pidPath);
   }
-  unlinkSync(pinggyPidPath);
 }
 
-async function startPinggy() {
+async function startLocalhostRun() {
   mkdirSync(runtimeDirectory, { recursive: true });
-  stopManagedPinggy();
-  if (!existsSync(pinggyKeyPath)) {
-    const key = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', pinggyKeyPath], {
-      stdio: 'inherit',
-    });
-    if (key.status !== 0) throw new Error('Не удалось создать временный SSH-ключ для HTTPS-туннеля');
-  }
+  stopManagedTunnel();
 
-  const log = openSync(pinggyLogPath, 'w');
+  const log = openSync(tunnelLogPath, 'w');
   const tunnel = spawn(
     'ssh',
     [
-      '-p',
-      '443',
-      '-i',
-      pinggyKeyPath,
-      '-o',
-      'IdentitiesOnly=yes',
       '-o',
       'StrictHostKeyChecking=accept-new',
       '-o',
-      `UserKnownHostsFile=${pinggyKnownHostsPath}`,
+      `UserKnownHostsFile=${tunnelKnownHostsPath}`,
       '-o',
       'ServerAliveInterval=30',
       '-o',
       'ExitOnForwardFailure=yes',
-      '-R0:localhost:4173',
-      'a.pinggy.io',
+      '-R',
+      '80:localhost:4173',
+      'nokey@localhost.run',
+      '--',
+      '--output',
+      'json',
     ],
     { detached: true, stdio: ['ignore', log, log] },
   );
   closeSync(log);
-  writeFileSync(pinggyPidPath, `${tunnel.pid}\n`, 'utf8');
+  writeFileSync(tunnelPidPath, `${tunnel.pid}\n`, 'utf8');
   tunnel.unref();
 
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    const output = existsSync(pinggyLogPath) ? readFileSync(pinggyLogPath, 'utf8') : '';
-    const urls = [...output.matchAll(/https:\/\/[a-z0-9-]+(?:\.run\.pinggy-free\.link|\.free\.pinggy\.net)/gi)];
-    const url = urls[0]?.[0];
+    const output = existsSync(tunnelLogPath) ? readFileSync(tunnelLogPath, 'utf8') : '';
+    const url = output.match(/https:\/\/[a-z0-9-]+\.lhr\.life/i)?.[0];
     if (url && (await waitForPublic(url, 15_000))) return url;
     try {
       process.kill(tunnel.pid, 0);
@@ -132,8 +125,8 @@ async function startPinggy() {
     }
     await new Promise((resolve) => setTimeout(resolve, 750));
   }
-  stopManagedPinggy();
-  throw new Error(`Резервный HTTPS-туннель не запустился. Лог: ${pinggyLogPath}`);
+  stopManagedTunnel();
+  throw new Error(`Резервный HTTPS-туннель не запустился. Лог: ${tunnelLogPath}`);
 }
 
 async function telegram(method, payload = {}) {
@@ -153,7 +146,7 @@ if (configuredUrl && !configuredUrl.startsWith('https://')) {
 }
 process.stdout.write(`Запускаю TeleBid, PostgreSQL и ${configuredUrl ? 'приложение' : 'HTTPS-туннель'}…\n`);
 mkdirSync(runtimeDirectory, { recursive: true });
-stopManagedPinggy();
+stopManagedTunnel();
 docker(['compose', '--profile', 'telegram', 'rm', '-sf', 'cloudflared'], { allowFailure: true });
 docker([
   'compose',
@@ -180,10 +173,10 @@ if (!publicUrl) {
 }
 if (publicUrl && !(await waitForPublic(publicUrl, 15_000))) publicUrl = '';
 if (!publicUrl) {
-  process.stdout.write('Cloudflare недоступен из этой сети, переключаюсь на резервный HTTPS-туннель…\n');
+  process.stdout.write('Cloudflare недоступен из этой сети, переключаюсь на localhost.run…\n');
   docker(['compose', '--profile', 'telegram', 'stop', 'cloudflared'], { allowFailure: true });
-  publicUrl = await startPinggy();
-  tunnelProvider = 'pinggy';
+  publicUrl = await startLocalhostRun();
+  tunnelProvider = 'localhost.run';
 }
 
 const bot = await telegram('getMe');
