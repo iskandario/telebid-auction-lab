@@ -20,11 +20,29 @@ function normalizeUrl(value) {
   return new URL(value).toString();
 }
 
-function latestTunnelUrl() {
+function latestRunlocalUrl() {
   if (!existsSync(tunnelLogPath)) return '';
   const output = readFileSync(tunnelLogPath, 'utf8');
   const url = [...output.matchAll(/https:\/\/[a-z0-9-]+\.runlocal\.eu/gi)].at(-1)?.[0];
   return url ? normalizeUrl(url) : '';
+}
+
+async function latestNgrokUrl() {
+  try {
+    const response = await fetch('http://127.0.0.1:4040/api/tunnels', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return '';
+    const body = await response.json();
+    const url = body.tunnels?.find((tunnel) => tunnel.proto === 'https')?.public_url;
+    return url ? normalizeUrl(url) : '';
+  } catch {
+    return '';
+  }
+}
+
+async function latestTunnelUrl() {
+  return (await latestNgrokUrl()) || latestRunlocalUrl();
 }
 
 async function isTeleBidReachable(url) {
@@ -67,7 +85,7 @@ let activeUrl = '';
 let synchronized = false;
 do {
   try {
-    const nextUrl = latestTunnelUrl();
+    const nextUrl = await latestTunnelUrl();
     if (nextUrl && nextUrl !== activeUrl && (await isTeleBidReachable(nextUrl))) {
       await updateMenuButton(nextUrl);
       writeFileSync(publicUrlPath, `${nextUrl}\n`, 'utf8');

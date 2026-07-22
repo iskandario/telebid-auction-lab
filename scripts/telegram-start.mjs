@@ -94,6 +94,38 @@ function latestRunlocalUrl(output) {
   return [...output.matchAll(/https:\/\/[a-z0-9-]+\.runlocal\.eu/gi)].at(-1)?.[0] ?? '';
 }
 
+async function latestNgrokUrl() {
+  try {
+    const response = await fetch('http://127.0.0.1:4040/api/tunnels', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return '';
+    const body = await response.json();
+    return body.tunnels?.find((tunnel) => tunnel.proto === 'https')?.public_url ?? '';
+  } catch {
+    return '';
+  }
+}
+
+async function ensureNgrokUrl() {
+  let url = await latestNgrokUrl();
+  if (url || process.platform !== 'darwin') return url;
+
+  const launchAgentPath = `${process.env.HOME}/Library/LaunchAgents/com.telebid.ngrok.plist`;
+  if (!existsSync(launchAgentPath)) return '';
+
+  spawnSync('launchctl', ['kickstart', `gui/${process.getuid()}/com.telebid.ngrok`], {
+    stdio: 'ignore',
+  });
+
+  const deadline = Date.now() + 15_000;
+  while (!url && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    url = await latestNgrokUrl();
+  }
+  return url;
+}
+
 function startTunnelWatcher() {
   stopManagedProcess(tunnelWatcherPidPath);
   const log = openSync(tunnelWatcherLogPath, 'w');
@@ -163,6 +195,8 @@ const configuredUrl = process.env.MINI_APP_URL?.trim();
 if (configuredUrl && !configuredUrl.startsWith('https://')) {
   throw new Error('MINI_APP_URL должен начинаться с https://');
 }
+const ngrokUrl = configuredUrl ? '' : await ensureNgrokUrl();
+const useCloudflare = !configuredUrl && !ngrokUrl;
 process.stdout.write(`Запускаю TeleBid, PostgreSQL и ${configuredUrl ? 'приложение' : 'HTTPS-туннель'}…\n`);
 mkdirSync(runtimeDirectory, { recursive: true });
 stopManagedProcess(tunnelWatcherPidPath);
@@ -170,20 +204,20 @@ stopManagedTunnel();
 docker(['compose', '--profile', 'telegram', 'rm', '-sf', 'cloudflared'], { allowFailure: true });
 docker([
   'compose',
-  ...(configuredUrl ? [] : ['--profile', 'telegram']),
+  ...(useCloudflare ? ['--profile', 'telegram'] : []),
   'up',
   '--build',
   '-d',
   'postgres',
   'api',
   'web',
-  ...(configuredUrl ? [] : ['cloudflared']),
+  ...(useCloudflare ? ['cloudflared'] : []),
 ]);
 await waitFor('http://localhost:8080/health', 60_000);
 
-let publicUrl = configuredUrl ?? '';
-let tunnelProvider = configuredUrl ? 'configured' : 'cloudflare';
-if (!publicUrl) {
+let publicUrl = configuredUrl ?? ngrokUrl;
+let tunnelProvider = configuredUrl ? 'configured' : ngrokUrl ? 'ngrok' : 'cloudflare';
+if (!publicUrl && useCloudflare) {
   const tunnelDeadline = Date.now() + 60_000;
   while (!publicUrl && Date.now() < tunnelDeadline) {
     const logs = docker(['compose', '--profile', 'telegram', 'logs', '--no-color', 'cloudflared'], { capture: true, allowFailure: true });
@@ -191,7 +225,15 @@ if (!publicUrl) {
     if (!publicUrl) await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 }
-if (publicUrl && !(await waitForPublic(publicUrl, 15_000))) publicUrl = '';
+if (publicUrl && !(await waitForPublic(publicUrl, 60_000))) publicUrl = '';
+if (!publicUrl && !configuredUrl) {
+  const recoveredNgrokUrl = await ensureNgrokUrl();
+  if (recoveredNgrokUrl && (await waitForPublic(recoveredNgrokUrl, 60_000))) {
+    publicUrl = recoveredNgrokUrl;
+    tunnelProvider = 'ngrok';
+    docker(['compose', '--profile', 'telegram', 'stop', 'cloudflared'], { allowFailure: true });
+  }
+}
 if (!publicUrl) {
   process.stdout.write('Cloudflare недоступен из этой сети, переключаюсь на runlocal…\n');
   docker(['compose', '--profile', 'telegram', 'stop', 'cloudflared'], { allowFailure: true });
@@ -218,13 +260,13 @@ await telegram('setMyCommands', {
 await telegram('setMyShortDescription', {
   short_description: 'Аукционы рекламных слотов и тендеры брендов в Telegram',
 }).catch(() => undefined);
-if (tunnelProvider === 'runlocal') startTunnelWatcher();
+if (['ngrok', 'runlocal'].includes(tunnelProvider)) startTunnelWatcher();
 
 process.stdout.write(`\nTeleBid готов.\n`);
 process.stdout.write(`Бот: https://t.me/${bot.username}\n`);
 process.stdout.write(`Mini App: ${publicUrl}\n`);
 process.stdout.write(`Туннель: ${tunnelProvider}\n`);
-if (tunnelProvider === 'runlocal') process.stdout.write('Автообновление ссылки: включено\n');
+if (['ngrok', 'runlocal'].includes(tunnelProvider)) process.stdout.write('Автообновление ссылки: включено\n');
 process.stdout.write(`Локально: http://localhost:4173\n`);
 process.stdout.write(`Логи: npm run telegram:logs\n`);
 process.stdout.write(`Остановить: npm run telegram:down\n`);
